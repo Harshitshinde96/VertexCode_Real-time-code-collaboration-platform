@@ -1,0 +1,36 @@
+# Dependencies
+**/node_modules/
+
+# Build output
+client/dist/
+server/build/ # Add if your server has a build step
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# IDE/Editor directories
+.vscode/
+.idea/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Vite specific cache/temp files
+client/node_modules/.vite-temp/
+client/coverage/
+
+# Misc
+.npm
+*.tsbuildinfo
+.eslintcache
