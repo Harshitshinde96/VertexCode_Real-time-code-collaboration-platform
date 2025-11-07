@@ -1,20 +1,4 @@
-import Client from "@/components/Client";
-import CodeEditor from "@/components/CodeEditor";
-import { Button } from "@/components/ui/button";
 import React, { useEffect, useRef, useState } from "react";
-
-// --- Imports for the language dropdown ---
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
-import { Code2, Play, Square } from "lucide-react";
-import { initSocket } from "@/socket";
-import ACTIONS from "@/Actions";
 import {
   Navigate,
   useLocation,
@@ -23,7 +7,21 @@ import {
 } from "react-router-dom";
 import { toast } from "sonner";
 
-// --- Language options ---
+import { initSocket } from "@/socket";
+import ACTIONS from "@/Actions";
+
+// Import all our new components
+import CodeEditor from "@/components/CodeEditor";
+import Sidebar from "@/components/Sidebar";
+import ControlBar from "@/components/ControlBar";
+import BottomPanel from "@/components/BottomPanel";
+import {
+  ResizablePanelGroup,
+  ResizablePanel,
+  ResizableHandle,
+} from "@/components/ui/resizable";
+
+// Language options are now local to this file
 const languages = [
   { id: "javascript", label: "JavaScript" },
   { id: "python", label: "Python" },
@@ -35,14 +33,24 @@ const languages = [
 
 const EditorPage = () => {
   const socketRef = useRef(null);
-  const codeRef = useRef(null);
+  const codeRef = useRef(
+    "// Welcome to VertexCode, Made with ❤️ by Harhsit Shinde \n"
+  );
+  const skipStdinChange = useRef(false);
+
   const location = useLocation();
   const reactNavigator = useNavigate();
   const { roomId } = useParams();
+
+  // State
   const [language, setLanguage] = useState("javascript");
-
   const [clients, setClients] = useState([]);
+  const [output, setOutput] = useState("");
+  const [isWaitingForInput, setIsWaitingForInput] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [stdin, setStdin] = useState("");
 
+  // Socket and event logic (remains unchanged)
   useEffect(() => {
     const init = () => {
       socketRef.current = initSocket();
@@ -65,7 +73,6 @@ const EditorPage = () => {
         ({ clients, username, socketId }) => {
           if (username !== location.state?.username) {
             toast.success(`${username} joined the room`);
-            console.log(`${username} joined`);
           }
           setClients(clients);
           socketRef.current.emit(ACTIONS.SYNC_CODE, {
@@ -79,10 +86,46 @@ const EditorPage = () => {
       socketRef.current.on(ACTIONS.DISCONNECTED, ({ socketId, username }) => {
         toast.success(`${username} left the room.`);
         setClients((prev) => {
-          return prev.filter((client) => client.socketId !== socketId); // this removes coming socketId from current client list and retunrs updated listed filtering the passed socketId
+          return prev.filter((client) => client.socketId !== socketId);
         });
       });
+
+      socketRef.current.on(ACTIONS.CODE_RUNNING, () => {
+        setOutput(""); // Clear the console
+        setIsLoading(true);
+        setIsWaitingForInput(false);
+      });
+
+      //Listen for code output
+      socketRef.current.on(
+        ACTIONS.CODE_OUTPUT,
+        ({ output, error, waitingForInput }) => {
+          setIsLoading(false);
+          if (error) {
+            setOutput((prev) => prev + `\nError: ${error}\n`);
+          } else {
+            setOutput((prev) => prev + output);
+          }
+          setIsWaitingForInput(waitingForInput);
+        }
+      );
+
+      socketRef.current.on(ACTIONS.LANGUAGE_CHANGE, ({ newLanguage }) => {
+        if (newLanguage) {
+          setLanguage(newLanguage);
+        }
+      });
+
+      // --- ADD THIS LISTENER for Stdin Change ---
+      socketRef.current.on(ACTIONS.STDIN_CHANGE, ({ newInput }) => {
+        if (newInput !== null) {
+          // Use the skip flag to prevent an echo
+          skipStdinChange.current = true;
+          setStdin(newInput);
+        }
+      });
     };
+
     init();
 
     return () => {
@@ -90,9 +133,34 @@ const EditorPage = () => {
         socketRef.current.disconnect();
         socketRef.current.off(ACTIONS.JOINED);
         socketRef.current.off(ACTIONS.DISCONNECTED);
+        socketRef.current.off(ACTIONS.CODE_RUNNING);
+        socketRef.current.off(ACTIONS.CODE_OUTPUT);
+        socketRef.current.off(ACTIONS.LANGUAGE_CHANGE);
+        socketRef.current.off(ACTIONS.STDIN_CHANGE);
       }
     };
   }, []);
+
+  // --- All Handler Functions ---
+
+  const runCode = () => {
+    socketRef.current.emit(ACTIONS.RUN_CODE, {
+      roomId,
+      language,
+      code: codeRef.current,
+      stdin: stdin,
+    });
+  };
+
+  const submitInput = (input) => {
+    setOutput((prev) => prev + `${input}\n`);
+    setIsLoading(true);
+    setIsWaitingForInput(false);
+    socketRef.current.emit(ACTIONS.PROVIDE_INPUT, {
+      roomId,
+      input,
+    });
+  };
 
   const copyRoomId = async () => {
     try {
@@ -108,106 +176,81 @@ const EditorPage = () => {
     reactNavigator("/");
   };
 
+  const handleLanguageChange = (newLanguage) => {
+    setLanguage(newLanguage); // Update local state
+    // Emit the change to the server
+    socketRef.current.emit(ACTIONS.LANGUAGE_CHANGE, {
+      roomId,
+      newLanguage,
+    });
+  };
+
+  // --- ADD THIS HANDLER for Stdin Change ---
+  const handleStdinChange = (e) => {
+    const newValue = e.target.value;
+    setStdin(newValue); // Update local state
+
+    // Check the skip flag to prevent echo
+    if (skipStdinChange.current) {
+      skipStdinChange.current = false;
+      return;
+    }
+    // Emit the change to the server
+    socketRef.current.emit(ACTIONS.STDIN_CHANGE, {
+      roomId,
+      newInput: newValue,
+    });
+  };
+
+  // --- Security Check ---
   if (!location.state) {
     return <Navigate to="/" />;
   }
 
+  // --- Cleaned-up JSX ---
   return (
-    // Main grid layout: 230px sidebar, remaining space for editor
     <div className="grid grid-cols-[230px_1fr] h-screen bg-[#1c1e29]">
-      {/* Sidebar Column */}
-      <div className="bg-[#282a36] p-4 text-white flex flex-col border-r border-neutral-700/80">
-        {/* Logo (Stays at the top, separated by a border) */}
-        <div className="logo pb-4 mb-4 shrink-0 border-b border-neutral-700">
-          <img
-            src="/vertex-code-logo-white.png"
-            alt="VertexCode Logo"
-            className="w-40" // Corrected from w-45
-          />
-        </div>
+      <Sidebar
+        clients={clients}
+        onCopyRoomId={copyRoomId}
+        onLeaveRoom={leaveRoom}
+      />
 
-        {/* Connected Clients (Scrollable Area) */}
-        <div className="flex-1 overflow-y-auto pr-2">
-          <h3 className="text-sm uppercase font-semibold tracking-wider text-neutral-400 mb-3 sticky top-0 py-2 bg-[#282a36]/90 backdrop-blur-sm border-b border-neutral-700/50">
-            Connected
-          </h3>
-
-          <div className="clientList flex flex-wrap gap-3">
-            {clients.map((client) => (
-              <Client key={client.socketId} username={client.username} />
-            ))}
-          </div>
-        </div>
-
-        {/* Bottom Buttons*/}
-        <div className="mt-auto shrink-0 border-t border-neutral-700 pt-4 space-y-3">
-          <Button
-            className="w-full font-bold py-3 bg-green-500 hover:bg-green-700 transition-all duration-200 focus:ring-2 focus:ring-green-500"
-            onClick={copyRoomId}
-          >
-            Copy Room ID
-          </Button>
-          <Button
-            className="w-full font-bold py-3 transition-all duration-200 focus:ring-2 bg-red-500 hover:bg-red-700" // Used red-600 as per your last code
-            onClick={leaveRoom}
-          >
-            Leave
-          </Button>
-        </div>
-      </div>
-
-      {/* Editor Column (NOW A FLEX CONTAINER) */}
+      {/* Main Panel (Editor + Output/Input) */}
       <div className="flex flex-col h-full">
-        {/* === NEW: Top Control Bar === */}
-        <div className="flex items-center justify-between p-2 bg-[#282a36] border-b border-neutral-700/80 shrink-0">
-          {/* Left Side: Language Selector */}
-          <Select
-            value={language}
-            onValueChange={(value) => setLanguage(value)}
-          >
-            <SelectTrigger className="w-[180px] bg-neutral-800 border-neutral-700 text-white">
-              <Code2 className="h-4 w-4 mr-2" />
-              <SelectValue placeholder="Select language" />
-            </SelectTrigger>
-            <SelectContent className="bg-neutral-800 text-white border-neutral-700">
-              {languages.map((lang) => (
-                <SelectItem
-                  key={lang.id}
-                  value={lang.id}
-                  className="focus:bg-neutral-700"
-                >
-                  {lang.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <ControlBar
+          language={language}
+          onLanguageChange={handleLanguageChange}
+          languages={languages}
+          onRunCode={runCode}
+          isLoading={isLoading}
+        />
 
-          {/* Right Side: Run/Stop Buttons */}
-          <div className="flex gap-2">
-            <Button className="font-semibold bg-green-500 hover:bg-green-700">
-              <Play className="h-4 w-4 mr-2" />
-              Run
-            </Button>
-            <Button className="font-semibold bg-red-500 hover:bg-red-700">
-              <Square className="h-4 w-4 mr-2" />
-              Stop
-            </Button>
-          </div>
-        </div>
-
-        {/* === Editor (Fills remaining space) === */}
-        <div className="flex-1 overflow-hidden">
-          {/* Pass the selected language to the editor */}
-          <CodeEditor
-            language={language}
-            socketRef={socketRef}
-            roomId={roomId}
-            onCodeChange={(code) => {
-              // this is going to be used for syncing code for new user when a joins newly
-              codeRef.current = code;
-            }}
-          />
-        </div>
+        <ResizablePanelGroup direction="vertical">
+          <ResizablePanel defaultSize={70}>
+            <div className="flex-1 overflow-hidden h-full">
+              <CodeEditor
+                language={language}
+                socketRef={socketRef}
+                roomId={roomId}
+                onCodeChange={(code) => {
+                  codeRef.current = code;
+                }}
+              />
+            </div>
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={30}>
+            <BottomPanel
+              output={output}
+              isWaitingForInput={isWaitingForInput}
+              onInputSubmit={submitInput}
+              isLoading={isLoading}
+              stdin={stdin}
+              onStdinChange={handleStdinChange}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     </div>
   );
