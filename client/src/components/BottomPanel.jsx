@@ -17,7 +17,7 @@ const BottomPanel = ({
 }) => {
   return (
     <div className="h-full flex flex-col">
-      {/* 2. REMOVED the old tab bar div */}
+      {/* 2. REMOVED the old tab bar*/}
 
       {/* 3. ResizablePanelGroup now fills the whole space */}
       <ResizablePanelGroup direction="horizontal" className="flex-1">
