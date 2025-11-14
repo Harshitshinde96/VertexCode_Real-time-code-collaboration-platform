@@ -20,6 +20,7 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
+import { Loader2 } from "lucide-react";
 
 // Language options are now local to this file
 const languages = [
@@ -27,9 +28,17 @@ const languages = [
   { id: "python", label: "Python" },
   { id: "java", label: "Java" },
   { id: "c", label: "C" },
-  { id: "html", label: "HTML" },
-  { id: "css", label: "CSS" },
+  // { id: "html", label: "HTML" },
+  // { id: "css", label: "CSS" },
 ];
+
+const FullPageLoader = ({ text }) => (
+  <div className="min-h-screen bg-[#1c1e29] text-white flex flex-col items-center justify-center p-4">
+    <Loader2 className="h-12 w-12 animate-spin mb-4" />
+    <h2 className="text-xl font-semibold">{text}</h2>
+    <p className="text-neutral-400">This may take up to 30 seconds...</p>
+  </div>
+);
 
 const EditorPage = () => {
   const socketRef = useRef(null);
@@ -49,22 +58,35 @@ const EditorPage = () => {
   const [isWaitingForInput, setIsWaitingForInput] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [stdin, setStdin] = useState("");
+  const [isConnected, setIsConnected] = useState(false);
 
   // Socket and event logic (remains unchanged)
   useEffect(() => {
     const init = () => {
       socketRef.current = initSocket();
-      socketRef.current.on("connect_error", (err) => handleErrors(err));
-      socketRef.current.on("connect_failed", (err) => handleErrors(err));
 
       function handleErrors(e) {
         console.log("socket error", e);
-        toast.error("Socket connection failed, try again later.");
-        reactNavigator("/");
+        toast.error("Connecting... Server may be waking up.");
+        // reactNavigator("/");
       }
-      socketRef.current.emit(ACTIONS.JOIN, {
-        roomId,
-        username: location.state?.username,
+
+      socketRef.current.on("connect_error", (err) => handleErrors(err));
+      socketRef.current.on("connect_failed", (err) => handleErrors(err));
+
+      socketRef.current.on("connect", () => {
+        setIsConnected(true);
+        toast.success("Successfully connected to the room!");
+
+        socketRef.current.emit(ACTIONS.JOIN, {
+          roomId,
+          username: location.state?.username,
+        });
+      });
+
+      socketRef.current.on("disconnect", () => {
+        toast.warning("Connection lost. Reconnecting...");
+        setIsConnected(false);
       });
 
       //Listening for joined event
@@ -116,7 +138,6 @@ const EditorPage = () => {
         }
       });
 
-      // --- ADD THIS LISTENER for Stdin Change ---
       socketRef.current.on(ACTIONS.STDIN_CHANGE, ({ newInput }) => {
         if (newInput !== null) {
           // Use the skip flag to prevent an echo
@@ -137,9 +158,13 @@ const EditorPage = () => {
         socketRef.current.off(ACTIONS.CODE_OUTPUT);
         socketRef.current.off(ACTIONS.LANGUAGE_CHANGE);
         socketRef.current.off(ACTIONS.STDIN_CHANGE);
+        socketRef.current.off("connect");
+        socketRef.current.off("disconnect");
+        socketRef.current.off("connect_error");
+        socketRef.current.off("connect_failed");
       }
     };
-  }, []);
+  }, [roomId, location.state?.username]);
 
   // --- All Handler Functions ---
 
@@ -207,7 +232,11 @@ const EditorPage = () => {
     return <Navigate to="/" />;
   }
 
-  // --- Cleaned-up JSX ---
+  // Show this *until* the socket is connected
+  if (!isConnected) {
+    return <FullPageLoader text="Waking up server..." />;
+  }
+
   return (
     <div className="grid grid-cols-[230px_1fr] h-screen bg-[#1c1e29]">
       <Sidebar
