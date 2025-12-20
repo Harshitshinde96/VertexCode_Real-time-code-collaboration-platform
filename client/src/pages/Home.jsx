@@ -23,6 +23,9 @@ const Home = () => {
       return;
     }
 
+    // Save to local storage
+    localStorage.setItem("savedUsername", username);
+
     //Redirect
     navigate(`/editor/${roomId}`, {
       state: {

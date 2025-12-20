@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Navigate,
   useLocation,
@@ -6,11 +6,13 @@ import {
   useParams,
 } from "react-router-dom";
 import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 
-import { initSocket } from "@/socket";
-import ACTIONS from "@/Actions";
+// Hooks & Constants
+import { useEditorSocket } from "@/hooks/useEditorSocket";
+import { LANGUAGES } from "@/constants";
 
-// Import all our new components
+// Components
 import CodeEditor from "@/components/CodeEditor";
 import Sidebar from "@/components/Sidebar";
 import ControlBar from "@/components/ControlBar";
@@ -20,17 +22,6 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { Loader2 } from "lucide-react";
-
-// Language options are now local to this file
-const languages = [
-  { id: "javascript", label: "JavaScript" },
-  { id: "python", label: "Python" },
-  { id: "java", label: "Java" },
-  { id: "c", label: "C" },
-  // { id: "html", label: "HTML" },
-  // { id: "css", label: "CSS" },
-];
 
 const FullPageLoader = ({ text }) => (
   <div className="min-h-screen bg-[#1c1e29] text-white flex flex-col items-center justify-center p-4">
@@ -41,151 +32,47 @@ const FullPageLoader = ({ text }) => (
 );
 
 const EditorPage = () => {
-  const socketRef = useRef(null);
-  const codeRef = useRef(
-    "// Welcome to VertexCode, Made with ❤️ by Harhsit Shinde \n"
-  );
-  const skipStdinChange = useRef(false);
-
   const location = useLocation();
   const reactNavigator = useNavigate();
   const { roomId } = useParams();
 
-  // State
-  const [language, setLanguage] = useState("javascript");
-  const [clients, setClients] = useState([]);
-  const [output, setOutput] = useState("");
-  const [isWaitingForInput, setIsWaitingForInput] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [stdin, setStdin] = useState("");
-  const [isConnected, setIsConnected] = useState(false);
+  // Initialize username from state OR local storage
+  const [username] = useState(
+    location.state?.username || localStorage.getItem("savedUsername")
+  );
 
-  // Socket and event logic (remains unchanged)
+  // Use Custom Hook for all Socket Logic
+  const {
+    socketRef,
+    codeRef,
+    language,
+    clients,
+    output,
+    isWaitingForInput,
+    isLoading,
+    stdin,
+    isConnected,
+    runCode,
+    submitInput,
+    handleLanguageChange,
+    handleStdinChange,
+  } = useEditorSocket(roomId, username);
+
+  // --- Security Check ---
   useEffect(() => {
-    const init = () => {
-      socketRef.current = initSocket();
+    // If no username found in state OR local storage, kick them out
+    if (!username) {
+      toast.error("Please join via the home page.");
+      reactNavigator("/");
+    }
+  }, [username, reactNavigator]);
 
-      function handleErrors(e) {
-        console.log("socket error", e);
-        toast.error("Connecting... Server may be waking up.");
-        // reactNavigator("/");
-      }
+  if (!username) return <Navigate to="/" />;
 
-      socketRef.current.on("connect_error", (err) => handleErrors(err));
-      socketRef.current.on("connect_failed", (err) => handleErrors(err));
-
-      socketRef.current.on("connect", () => {
-        setIsConnected(true);
-        toast.success("Successfully connected to the room!");
-
-        socketRef.current.emit(ACTIONS.JOIN, {
-          roomId,
-          username: location.state?.username,
-        });
-      });
-
-      socketRef.current.on("disconnect", () => {
-        toast.warning("Connection lost. Reconnecting...");
-        setIsConnected(false);
-      });
-
-      //Listening for joined event
-      socketRef.current.on(
-        ACTIONS.JOINED,
-        ({ clients, username, socketId }) => {
-          if (username !== location.state?.username) {
-            toast.success(`${username} joined the room`);
-          }
-          setClients(clients);
-          socketRef.current.emit(ACTIONS.SYNC_CODE, {
-            code: codeRef.current,
-            socketId,
-          });
-        }
-      );
-
-      //Listeing for disconnected
-      socketRef.current.on(ACTIONS.DISCONNECTED, ({ socketId, username }) => {
-        toast.success(`${username} left the room.`);
-        setClients((prev) => {
-          return prev.filter((client) => client.socketId !== socketId);
-        });
-      });
-
-      socketRef.current.on(ACTIONS.CODE_RUNNING, () => {
-        setOutput(""); // Clear the console
-        setIsLoading(true);
-        setIsWaitingForInput(false);
-      });
-
-      //Listen for code output
-      socketRef.current.on(
-        ACTIONS.CODE_OUTPUT,
-        ({ output, error, waitingForInput }) => {
-          setIsLoading(false);
-          if (error) {
-            setOutput((prev) => prev + `\nError: ${error}\n`);
-          } else {
-            setOutput((prev) => prev + output);
-          }
-          setIsWaitingForInput(waitingForInput);
-        }
-      );
-
-      socketRef.current.on(ACTIONS.LANGUAGE_CHANGE, ({ newLanguage }) => {
-        if (newLanguage) {
-          setLanguage(newLanguage);
-        }
-      });
-
-      socketRef.current.on(ACTIONS.STDIN_CHANGE, ({ newInput }) => {
-        if (newInput !== null) {
-          // Use the skip flag to prevent an echo
-          skipStdinChange.current = true;
-          setStdin(newInput);
-        }
-      });
-    };
-
-    init();
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current.off(ACTIONS.JOINED);
-        socketRef.current.off(ACTIONS.DISCONNECTED);
-        socketRef.current.off(ACTIONS.CODE_RUNNING);
-        socketRef.current.off(ACTIONS.CODE_OUTPUT);
-        socketRef.current.off(ACTIONS.LANGUAGE_CHANGE);
-        socketRef.current.off(ACTIONS.STDIN_CHANGE);
-        socketRef.current.off("connect");
-        socketRef.current.off("disconnect");
-        socketRef.current.off("connect_error");
-        socketRef.current.off("connect_failed");
-      }
-    };
-  }, [roomId, location.state?.username]);
-
-  // --- All Handler Functions ---
-
-  const runCode = () => {
-    socketRef.current.emit(ACTIONS.RUN_CODE, {
-      roomId,
-      language,
-      code: codeRef.current,
-      stdin: stdin,
-    });
-  };
-
-  const submitInput = (input) => {
-    setOutput((prev) => prev + `${input}\n`);
-    setIsLoading(true);
-    setIsWaitingForInput(false);
-    socketRef.current.emit(ACTIONS.PROVIDE_INPUT, {
-      roomId,
-      input,
-    });
-  };
+  // Show this *until* the socket is connected
+  if (!isConnected) {
+    return <FullPageLoader text="Waking up server..." />;
+  }
 
   const copyRoomId = async () => {
     try {
@@ -201,42 +88,6 @@ const EditorPage = () => {
     reactNavigator("/");
   };
 
-  const handleLanguageChange = (newLanguage) => {
-    setLanguage(newLanguage); // Update local state
-    // Emit the change to the server
-    socketRef.current.emit(ACTIONS.LANGUAGE_CHANGE, {
-      roomId,
-      newLanguage,
-    });
-  };
-
-  // --- ADD THIS HANDLER for Stdin Change ---
-  const handleStdinChange = (e) => {
-    const newValue = e.target.value;
-    setStdin(newValue); // Update local state
-
-    // Check the skip flag to prevent echo
-    if (skipStdinChange.current) {
-      skipStdinChange.current = false;
-      return;
-    }
-    // Emit the change to the server
-    socketRef.current.emit(ACTIONS.STDIN_CHANGE, {
-      roomId,
-      newInput: newValue,
-    });
-  };
-
-  // --- Security Check ---
-  if (!location.state) {
-    return <Navigate to="/" />;
-  }
-
-  // Show this *until* the socket is connected
-  if (!isConnected) {
-    return <FullPageLoader text="Waking up server..." />;
-  }
-
   return (
     <div className="grid grid-cols-[230px_1fr] h-screen bg-[#1c1e29]">
       <Sidebar
@@ -250,7 +101,7 @@ const EditorPage = () => {
         <ControlBar
           language={language}
           onLanguageChange={handleLanguageChange}
-          languages={languages}
+          languages={LANGUAGES}
           onRunCode={runCode}
           isLoading={isLoading}
         />
