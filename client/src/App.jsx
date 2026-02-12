@@ -1,6 +1,4 @@
-import { Outlet, Link } from "react-router-dom";
-import Home from "./pages/Home";
-import EditorPage from "./pages/EditorPage";
+import { Outlet } from "react-router-dom";
 import { Toaster } from "./components/ui/sonner";
 
 function App() {

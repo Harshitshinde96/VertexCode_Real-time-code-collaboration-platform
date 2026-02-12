@@ -10,6 +10,7 @@ const Home = () => {
 
   const [roomId, setRoomId] = useState("");
   const [username, setUsername] = useState("");
+
   const createNewRoom = (e) => {
     e.preventDefault();
     const id = uuidV4();
@@ -35,6 +36,7 @@ const Home = () => {
     });
   };
 
+  //Handels Enter key hit on keybord
   const handleInputEnter = (e) => {
     // console.log("event", e.code);
     if (e.code === "Enter") {
@@ -42,7 +44,6 @@ const Home = () => {
     }
   };
   return (
-    // Main wrapper for the entire page
     <div className="min-h-screen bg-[#1c1e29] text-white flex flex-col items-center justify-center p-4">
       {/* The main content form card */}
       <div className="w-full max-w-md bg-[#282a36] p-8 rounded-xl shadow-lg flex flex-col gap-7">
@@ -69,6 +70,7 @@ const Home = () => {
             onChange={(e) => setUsername(e.target.value)}
             value={username}
             className="bg-neutral-800 border-2 border-neutral-700 rounded-lg px-4 py-3 placeholder:text-neutral-500 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/50 transition-colors duration-200"
+            //Handels Enter key hit on keybord
             onKeyUp={handleInputEnter}
           />
           <Button

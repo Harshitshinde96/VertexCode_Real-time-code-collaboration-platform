@@ -4,6 +4,7 @@ import "./index.css";
 import App from "./App.jsx";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import Home from "./pages/Home.jsx";
+import ErrorPage from "./pages/ErrorPage.jsx";
 const EditorPage = React.lazy(() => import("./pages/EditorPage"));
 
 const PageLoader = () => (
@@ -16,6 +17,7 @@ const router = createBrowserRouter([
   {
     path: "/",
     element: <App />,
+    errorElement: <ErrorPage />,
     children: [
       {
         index: true,
