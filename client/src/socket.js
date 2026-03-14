@@ -1,18 +1,19 @@
-import { io } from 'socket.io-client';
+import { io } from "socket.io-client";
 
 export const initSocket = () => {
-    const backendURL = import.meta.env.VITE_BACKEND_URL;
+  const backendURL = import.meta.env.VITE_BACKEND_URL;
 
-    if (!backendURL) {
-        throw new Error('VITE_BACKEND_URL is not defined in .env file');
-    }
+  if (!backendURL) {
+    throw new Error("VITE_BACKEND_URL is not defined in .env file");
+  }
 
-    const options = {
-        reconnection: true,
-        reconnectionAttempts: Infinity, 
-        reconnectionDelay: 1000, 
-        transports: ['websocket'],
-    };
+  const options = {
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    transports: ["websocket"],
+    withCredentials: true,
+  };
 
-    return io(backendURL, options);
+  return io(backendURL, options);
 };

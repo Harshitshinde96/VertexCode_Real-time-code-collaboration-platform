@@ -1,12 +1,10 @@
-import React, { useEffect, useState } from "react";
-import {
-  Navigate,
-  useLocation,
-  useNavigate,
-  useParams,
-} from "react-router-dom";
+import React from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+
+// Context
+import { useAuth } from "../context/AuthContext";
 
 // Hooks & Constants
 import { useEditorSocket } from "@/hooks/useEditorSocket";
@@ -23,25 +21,21 @@ import {
   ResizableHandle,
 } from "@/components/ui/resizable";
 
-const FullPageLoader = ({ text }) => (
+// A reusable full-page loader
+const FullPageLoader = ({ title, subtitle }) => (
   <div className="min-h-screen bg-[#1c1e29] text-white flex flex-col items-center justify-center p-4">
-    <Loader2 className="h-12 w-12 animate-spin mb-4" />
-    <h2 className="text-xl font-semibold">{text}</h2>
-    <p className="text-neutral-400">This may take up to 30 seconds...</p>
+    <Loader2 className="h-12 w-12 animate-spin mb-4 text-green-500" />
+    <h2 className="text-xl font-semibold">{title}</h2>
+    <p className="text-neutral-400 mt-2">{subtitle}</p>
   </div>
 );
 
 const EditorPage = () => {
-  const location = useLocation();
   const reactNavigator = useNavigate();
   const { roomId } = useParams();
 
-  // Initialize username from state OR local storage
-  const [username] = useState(
-    location.state?.username || localStorage.getItem("savedUsername")
-  );
+  const { user } = useAuth();
 
-  // Use Custom Hook for all Socket Logic
   const {
     socketRef,
     codeRef,
@@ -52,32 +46,58 @@ const EditorPage = () => {
     isLoading,
     stdin,
     isConnected,
+    isWaiting,
+    waitingState,
     runCode,
     submitInput,
     handleLanguageChange,
     handleStdinChange,
-  } = useEditorSocket(roomId, username);
+  } = useEditorSocket(roomId, user?.name);
 
-  // --- Security Check ---
-  useEffect(() => {
-    // If no username found in state OR local storage, kick them out
-    if (!username) {
-      toast.error("Please join via the home page.");
-      reactNavigator("/");
+  const currentUserClient = clients.find((c) => c.username === user?.name);
+  const isHost = currentUserClient?.role === "host";
+
+  const handleProtectedRunCode = () => {
+    if (!isHost) {
+      toast.error("Only the Room Host can run code.");
+      return;
     }
-  }, [username, reactNavigator]);
+    runCode();
+  };
 
-  if (!username) return <Navigate to="/" />;
+  const handleProtectedLanguageChange = (newLang) => {
+    if (!isHost) {
+      toast.error("Only the Room Host can change the language.");
+      return;
+    }
+    handleLanguageChange(newLang);
+  };
 
-  // Show this *until* the socket is connected
+  // --- UI RENDER LOCKS ---
+
   if (!isConnected) {
-    return <FullPageLoader text="Waking up server..." />;
+    return (
+      <FullPageLoader
+        title="Connecting..."
+        subtitle="Establishing secure connection to the server."
+      />
+    );
+  }
+
+  // 🟢 Intercept the render if they are a Guest waiting for Host approval
+  if (isWaiting) {
+    return (
+      <FullPageLoader
+        title={waitingState.title}
+        subtitle={waitingState.subtitle}
+      />
+    );
   }
 
   const copyRoomId = async () => {
     try {
       await navigator.clipboard.writeText(roomId);
-      toast.success("Room ID has been copied to your clipboard ");
+      toast.success("Room ID has been copied to your clipboard");
     } catch (error) {
       toast.error("Could not copy Room ID");
       console.error(error);
@@ -96,14 +116,14 @@ const EditorPage = () => {
         onLeaveRoom={leaveRoom}
       />
 
-      {/* Main Panel (Editor + Output/Input) */}
       <div className="flex flex-col h-full">
         <ControlBar
           language={language}
-          onLanguageChange={handleLanguageChange}
+          onLanguageChange={handleProtectedLanguageChange}
           languages={LANGUAGES}
-          onRunCode={runCode}
+          onRunCode={handleProtectedRunCode}
           isLoading={isLoading}
+          isHost={isHost}
         />
 
         <ResizablePanelGroup direction="vertical">
