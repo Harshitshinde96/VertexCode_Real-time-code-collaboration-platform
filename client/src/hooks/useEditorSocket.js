@@ -4,16 +4,13 @@ import { toast } from "sonner";
 import { initSocket } from "@/socket";
 import ACTIONS from "@/Actions";
 
-export const useEditorSocket = (roomId, username) => {
+export const useEditorSocket = (roomId, currentUsername) => {
   const socketRef = useRef(null);
-  const codeRef = useRef(
-    "// Welcome to VertexCode, Made with ❤️ by Harhsit Shinde \n"
-  );
+  const codeRef = useRef("// Welcome to VertexCode\n// Start typing here...\n");
   const skipStdinChange = useRef(false);
   const languageRef = useRef("javascript");
   const reactNavigator = useNavigate();
 
-  // State
   const [language, setLanguage] = useState("javascript");
   const [clients, setClients] = useState([]);
   const [output, setOutput] = useState("");
@@ -21,87 +18,123 @@ export const useEditorSocket = (roomId, username) => {
   const [isLoading, setIsLoading] = useState(false);
   const [stdin, setStdin] = useState("");
   const [isConnected, setIsConnected] = useState(false);
+  const [isWaiting, setIsWaiting] = useState(true);
+  const [waitingState, setWaitingState] = useState({
+    title: "Asking to join...",
+    subtitle: "Waiting for the host to admit you to the room.",
+  });
 
-  // 2. ADD THIS EFFECT: Keep the Ref in sync with the State
   useEffect(() => {
     languageRef.current = language;
   }, [language]);
 
-  // Socket and event logic (remains unchanged)
   useEffect(() => {
     const init = () => {
       socketRef.current = initSocket();
 
-      function handleErrors(e) {
-        console.log("socket error", e);
+      function handleErrors(err) {
+        if (err.message && err.message.includes("Authentication error")) {
+          toast.error("Session expired or unauthorized. Please log in again.");
+          reactNavigator("/login");
+          return;
+        }
         toast.error("Connecting... Server may be waking up.");
-        // reactNavigator("/");
       }
 
-      socketRef.current.on("connect_error", (err) => handleErrors(err));
-      socketRef.current.on("connect_failed", (err) => handleErrors(err));
+      socketRef.current.on("connect_error", handleErrors);
+      socketRef.current.on("connect_failed", handleErrors);
 
       socketRef.current.on("connect", () => {
         setIsConnected(true);
-        toast.success("Successfully connected to the room!");
+        setIsWaiting(true);
+        socketRef.current.emit(ACTIONS.ASK_TO_JOIN, { roomId });
+      });
 
-        socketRef.current.emit(ACTIONS.JOIN, {
-          roomId,
-          username: username,
+      socketRef.current.on(ACTIONS.WAITING_FOR_HOST, ({ message }) => {
+        setIsWaiting(true);
+        setWaitingState({
+          title: "Waiting for Host...",
+          subtitle: message || "The host has not joined this session yet.",
         });
       });
+
+      socketRef.current.on(ACTIONS.REQUEST_DENIED, ({ message }) => {
+        toast.error(message || "The host declined your request.");
+        reactNavigator("/");
+      });
+
+      // 🟢 FIX FOR ISSUE 2: Listen for the backend sending the live code state
+      socketRef.current.on(ACTIONS.SYNC_CODE, ({ code, language: newLang }) => {
+        codeRef.current = code; // Updates the ref so when the Editor mounts, it uses this!
+        if (newLang) {
+          setLanguage(newLang);
+          languageRef.current = newLang;
+        }
+      });
+
+      socketRef.current.on(
+        ACTIONS.JOIN_REQUEST,
+        ({ guestSocketId, guestName }) => {
+          toast(`${guestName} is asking to join`, {
+            id: guestName, // 🟢 FIX: Prevents duplicate toasts for the same user
+            duration: 15000,
+            action: {
+              label: "Admit",
+              onClick: () => {
+                socketRef.current.emit(ACTIONS.ADMIT_USER, {
+                  guestSocketId,
+                  roomId,
+                });
+              },
+            },
+            cancel: {
+              label: "Deny",
+              onClick: () => {
+                socketRef.current.emit(ACTIONS.DENY_USER, { guestSocketId });
+              },
+            },
+          });
+        },
+      );
 
       socketRef.current.on("disconnect", () => {
         toast.warning("Connection lost. Reconnecting...");
         setIsConnected(false);
       });
 
-      //Listening for joined event
       socketRef.current.on(
         ACTIONS.JOINED,
-        ({ clients, username, socketId }) => {
-          if (username !== location.state?.username) {
-            toast.success(`${username} joined the room`);
-            // console.log(`${username} joined`); //TODO: Remove
+        ({ clients, username, role, socketId }) => {
+          if (socketId === socketRef.current.id) {
+            // Because the backend sent SYNC_CODE milliseconds before this,
+            // codeRef.current now contains the live code. Dropping the loading screen mounts the editor perfectly!
+            setIsWaiting(false);
+            toast.success("You have joined the room.");
+          } else {
+            toast.success(`${username} joined as ${role}`);
           }
+
           setClients(clients);
 
-          // FIX: Check if the joined user is NOT 'me'
-          // We only want the EXISTING user (User A) to emit the code/language.
-          // The NEW user (User B) should just listen.
-          if (socketId !== socketRef.current.id) {
-            // 1. Sync Code (User A sends code to User B)
-            socketRef.current.emit(ACTIONS.SYNC_CODE, {
-              code: codeRef.current,
-              socketId, // Send to the specific new user
-            });
-
-            // 2. Sync Language (User A sends current language to the room/user)
-            // Since User A has the "truth" (e.g., Python), they broadcast it.
-            // User B receives this and switches from JS -> Python.
-            socketRef.current.emit(ACTIONS.LANGUAGE_CHANGE, {
-              roomId,
-              newLanguage: languageRef.current, // User A's current state
-            });
-          }
-        }
+          // Note: We removed the Host-side SYNC_CODE emission here because the Backend handles it now.
+        },
       );
 
-      //Listeing for disconnected
       socketRef.current.on(ACTIONS.DISCONNECTED, ({ socketId, username }) => {
-        toast.success(`${username} left the room.`);
-        setClients((prev) => {
-          return prev.filter((client) => client.socketId !== socketId);
-        });
+        if (username) {
+          toast.success(`${username} left the room.`);
+        }
+        setClients((prev) =>
+          prev.filter((client) => client.socketId !== socketId),
+        );
       });
 
       socketRef.current.on(ACTIONS.CODE_RUNNING, () => {
-        setOutput(""); // Clear the console
+        setOutput("");
         setIsLoading(true);
         setIsWaitingForInput(false);
       });
 
-      //Listen for code output
       socketRef.current.on(
         ACTIONS.CODE_OUTPUT,
         ({ output, error, waitingForInput }) => {
@@ -112,7 +145,7 @@ export const useEditorSocket = (roomId, username) => {
             setOutput((prev) => prev + output);
           }
           setIsWaitingForInput(waitingForInput);
-        }
+        },
       );
 
       socketRef.current.on(ACTIONS.LANGUAGE_CHANGE, ({ newLanguage }) => {
@@ -124,14 +157,13 @@ export const useEditorSocket = (roomId, username) => {
 
       socketRef.current.on(ACTIONS.STDIN_CHANGE, ({ newInput }) => {
         if (newInput !== null) {
-          // Use the skip flag to prevent an echo
           skipStdinChange.current = true;
           setStdin(newInput);
         }
       });
     };
 
-    if (username) {
+    if (currentUsername) {
       init();
     }
 
@@ -144,15 +176,17 @@ export const useEditorSocket = (roomId, username) => {
         socketRef.current.off(ACTIONS.CODE_OUTPUT);
         socketRef.current.off(ACTIONS.LANGUAGE_CHANGE);
         socketRef.current.off(ACTIONS.STDIN_CHANGE);
+        socketRef.current.off(ACTIONS.JOIN_REQUEST);
+        socketRef.current.off(ACTIONS.WAITING_FOR_HOST);
+        socketRef.current.off(ACTIONS.REQUEST_DENIED);
+        socketRef.current.off(ACTIONS.SYNC_CODE); // Cleanup the new listener
         socketRef.current.off("connect");
         socketRef.current.off("disconnect");
         socketRef.current.off("connect_error");
         socketRef.current.off("connect_failed");
       }
     };
-  }, [roomId, username, reactNavigator]);
-
-  // --- All Handler Functions ---
+  }, [roomId, currentUsername, reactNavigator]);
 
   const runCode = () => {
     socketRef.current.emit(ACTIONS.RUN_CODE, {
@@ -174,25 +208,22 @@ export const useEditorSocket = (roomId, username) => {
   };
 
   const handleLanguageChange = (newLanguage) => {
-    setLanguage(newLanguage); // Update local state
-    // Emit the change to the server
+    setLanguage(newLanguage);
     socketRef.current.emit(ACTIONS.LANGUAGE_CHANGE, {
       roomId,
       newLanguage,
     });
   };
 
-  // --- ADD THIS HANDLER for Stdin Change ---
   const handleStdinChange = (e) => {
     const newValue = e.target.value;
-    setStdin(newValue); // Update local state
+    setStdin(newValue);
 
-    // Check the skip flag to prevent echo
     if (skipStdinChange.current) {
       skipStdinChange.current = false;
       return;
     }
-    // Emit the change to the server
+
     socketRef.current.emit(ACTIONS.STDIN_CHANGE, {
       roomId,
       newInput: newValue,
@@ -209,6 +240,8 @@ export const useEditorSocket = (roomId, username) => {
     isLoading,
     stdin,
     isConnected,
+    isWaiting,
+    waitingState,
     runCode,
     submitInput,
     handleLanguageChange,
